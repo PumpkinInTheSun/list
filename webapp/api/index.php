@@ -28,6 +28,7 @@
 require_once('../database.php');
 require '../data/User.php';
 require '../data/List.php';
+require 'functions.php';
 require 'klein.php';
 
 header('Content-Type: text/javascript; charset=utf8');
@@ -41,7 +42,7 @@ with('/api/category', function () {
 
         $list = new UserList();
 
-	$selection = $list->getCategories(20);
+	   $selection = $list->getCategories(20);
         
         $output = json_encode($selection, JSON_PRETTY_PRINT);
         echo $output;
@@ -139,76 +140,72 @@ with('/api/photos', function () {
 });
 
 with('/api/users', function () {
-
     respond('POST', '/login', function ($request, $response) {
-
         $url = 'https://login.creativecommons.org/x.php';
         $fields = array(
             'username' => urlencode($request->param('username')),
             'password' => urlencode($request->param('password'))
         );
-
-        foreach($fields as $key=>$value) { $posty .= $key.'='.$value.'&'; }
-        rtrim($posty, '&');
-
-        $curl = curl_init();
-
-        curl_setopt($curl,CURLOPT_URL, $url);
-        curl_setopt($curl,CURLOPT_POST, count($fields));
-        curl_setopt($curl,CURLOPT_POSTFIELDS, $posty);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-
-        $result = curl_exec($curl);
-
-        if ($result) {     // if the user exists in CAS
-
+    
+        if(strpos($fields['username'], "@") === false) {
+            // if there's no @ sign, we're looking at either a failed login or a temp user
             $user = new UserList();
-
+            if ($fields['username'] == "" && $fields['password'] == "") {
+                // No user name or password? Temp user registration
+                // Let's make a user with a GUID instead of an email address?
+                $guid = generateGUID();
+                $result = $user->getUserInfo($guid);
+                
+                while(!empty($result)) {
+                    $guid = generateGUID();
+                    $result = $user->getUserInfo($guid);
+                }
+                
+                $result = $guid;
+            } else {
+                $result = $user->getUserInfo($fields['username']);
+                if(empty($result)) {
+                    http_response_code(401);
+                } else {
+                        $result = $fields['username']; // this assumes a previous GUID
+                }
+            }
+        } else {
+            foreach($fields as $key=>$value) { $posty .= $key.'='.$value.'&'; }
+            rtrim($posty, '&');
+            $curl = curl_init();
+            curl_setopt($curl,CURLOPT_URL, $url);
+            curl_setopt($curl,CURLOPT_POST, count($fields));
+            curl_setopt($curl,CURLOPT_POSTFIELDS, $posty);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            $result = curl_exec($curl);
+                curl_close($curl);
+        } 
+        if ($result) {     // if the user exists in CAS
+            $user = new UserList();
             $foo = $user->getUserInfo($result); // get the userID, etc
-
             if (count($foo) == 0) {  // first time on The List
-
                 $user->makeUser($result); // make a User
-
                 $foo = $user->getUserInfo($result); // now get the userID
             }
-
             // Now let's make a session for the user
-
             $userid = $foo['id'];
-
             $session = $user->getUserSession($userid);
-
+            $session['email'] = $result;
             $output = json_encode($session, JSON_PRETTY_PRINT);
-            echo $output;
-            
-        }
-
-        else { // invalid user
-
+            echo urldecode($output);
+        } else { // invalid user
             http_response_code(401);                
-
         }
-
-        curl_close($curl);
-
     });
-
     respond('POST', '/register', function ($request, $response) {
-
         echo "This is the register stub";
-
     });
-
     respond('GET', '/[:email]', function ($request, $response) {
-
         echo "This is the GET USER stub";
-
     });
-
-
-
 });
+
 
 with('/api/suggestions', function () {
 
